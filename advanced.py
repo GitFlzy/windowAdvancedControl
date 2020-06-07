@@ -1,7 +1,10 @@
 from pynput.keyboard import Listener as KeyboardListener
 from pynput.mouse import Listener as MouseListener
-from pynput.keyboard import Key
-from pynput.keyboard._win32 import KeyCode
+from pynput.keyboard import (
+    Key,
+    KeyCode,
+    # HotKey,
+)
 
 import win32api
 import win32gui
@@ -12,18 +15,17 @@ from ctypes import windll
 import threading
 
 
-# log = print
+log = print
 
-COMBINATIONS = {
-    Key.ctrl_l,
-    Key.alt_l,
-    KeyCode(83),
-}
+GLOBAL_COMBINATIONS = [
+    {Key.ctrl_l, Key.alt_l, KeyCode(83)},
+]
 
-pressed_current = set()
-last_position = None
-window = None
-lock = threading.Lock()
+global_enable_move = False
+global_current = set()
+global_last_position = None
+global_window = None
+global_lock = threading.Lock()
 
 
 def is_desktop(handle):
@@ -44,6 +46,10 @@ class Window(object):
         self.y = y
         self.width = width
         self.height = height
+
+    def maximized(self):
+        status = windll.user32.IsZoomed(self.handle)
+        return status
 
     def move(self, delta_x, delta_y):
         if not is_desktop(self.handle):
@@ -88,68 +94,89 @@ def window_point():
     return window
 
 
+def restore_window_size(window):
+    # global global_window
+    handle = window.handle
+
+    status = windll.user32.IsZoomed(handle)
+    if status:
+        # print('当前窗口最大化了', status)
+        win32gui.ShowWindow(handle, win32con.SW_RESTORE)
+        window = window_point()
+
+    return window
+
+
 def on_move(x, y):
-    global last_position
-    global window
-    global COMBINATIONS
-    global lock
+    # return
+    global global_last_position
+    global global_window
+    global global_lock
+    global global_enable_move
 
-    lock.acquire()
+    global_lock.acquire()
 
-    if pressed_current == COMBINATIONS:
-        status = windll.user32.IsZoomed(window.handle)
-        if status:
-            # print('当前窗口最大化了', status)
-            win32gui.ShowWindow(window.handle, win32con.SW_RESTORE)
-            window = window_point()
+    if global_enable_move and not global_window.maximized():
         # 缩放 150%
         x = math.floor(x / 1.5)
         y = math.floor(y / 1.5)
-        # log('on_move x, y', x, y)
-        # log('api get last_position', last_position)
-        delta_x = x - last_position[0]
-        delta_y = y - last_position[1]
-        last_position = (x, y)
+        delta_x = x - global_last_position[0]
+        delta_y = y - global_last_position[1]
+        global_last_position = (x, y)
         # log('鼠标移动了')
-        window.move(delta_x, delta_y)
+        global_window.move(delta_x, delta_y)
 
-    lock.release()
+    global_lock.release()
+
+
+def pressed_comb(current, COMBINATIONS):
+    for combs in COMBINATIONS:
+        if current == combs:
+            return True
+    return False
 
 
 def on_press(key):
-    global pressed_current
-    global lock
-    global window
+    global GLOBAL_COMBINATIONS
+    global global_lock
 
-    lock.acquire()
+    global_lock.acquire()
 
-    if key in COMBINATIONS:
-        pressed_current.add(key)
-        # log('按下了', key)
-        if pressed_current == COMBINATIONS:
-            global last_position
+    if any([key in combs for combs in GLOBAL_COMBINATIONS]):
+        global global_enable_move
+        global global_current
+
+        global_current.add(key)
+        if (pressed_comb(global_current, GLOBAL_COMBINATIONS) and
+           not global_enable_move):
+            global global_last_position
+            global global_window
+
             # log('触发快捷键，可以移动窗口')
             pos = win32api.GetCursorPos()
-            last_position = pos
-            # if window is None:
-            window = window_point()
-            # print('window', window)
+            global_last_position = pos
+            global_window = window_point()
+            global_enable_move = True
+            # print('触发热键')
 
-    lock.release()
+    global_lock.release()
 
 
 def on_release(key):
-    global window
-    global pressed_current
-    global lock
+    # global global_window
+    global global_current
+    global global_lock
+    global global_enable_move
 
-    lock.acquire()
+    global_lock.acquire()
 
-    if key in pressed_current:
-        pressed_current.remove(key)
-        # window = None
+    if key in global_current:
+        # print('删除了', key)
+        global_current.remove(key)
+        global_enable_move = False
+        # global_window = None
 
-    lock.release()
+    global_lock.release()
 
 
 def on_scroll(x, y, dx, dy):
@@ -165,4 +192,5 @@ def advancedControl():
 
 
 if __name__ == "__main__":
+    # print(HotKey.parse('<ctrl>+<alt>+h'))
     advancedControl()
